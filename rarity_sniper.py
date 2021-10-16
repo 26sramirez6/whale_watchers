@@ -4,7 +4,7 @@ Created on Oct 11, 2021
 
 @author: 26sra
 '''
-
+import sys
 import requests
 import json
 import time
@@ -19,14 +19,20 @@ import datetime
 from lxml.html import fromstring
 from multiprocessing import Pool, Process, Manager
 import pickle
+from web3 import Web3
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-IPFS_HASH = "QmQfRBJ44rgAmcoNJhsXS1g5B32dsh2M1JTVmkcLPnmbHV" #"bafybeic26wp7ck2bsjhjm5pcdigxqebnthqrmugsygxj5fov2r2qwhxyqu"
 ETHERSCAN_API_KEY = "4IV18GY7DMT29HR6PMGXB9EZUZ1KZYJGX2"
 OS_URL = "https://api.opensea.io/api/v1/events"
 ETH_URL = "https://api.etherscan.io/api"
 QRY_STR = {"only_opensea":"false","offset":"0","limit":"20", "event_type":"successful"}
 HEADERS = {"Accept": "application/json"}
-CONTRACT = "0x9A534628B4062E123cE7Ee2222ec20B86e16Ca8F"
+CONTRACT = "0xf7143ba42d40eaeb49b88dac0067e54af042e963" #"0xf7143ba42d40eaeb49b88dac0067e54af042e963" #"0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA"
+WEB3_URL = "https://mainnet.infura.io/v3" #"wss://mainnet.infura.io/ws/v3"
+WEB3_API_KEY = "76e9e5d5de124620a24a3430699db0c3"
+SCRAPER_API_KEY = "40b2cc4259dffdd12466035827b4c3e5"
+SCRAPER_API_BASE = "http://api.scraperapi.com"
 
 HEADERS = [
     # Firefox 77 Mac
@@ -172,20 +178,89 @@ class ProxyRotator:
         print("*********ROTATOR RESULTS*********")
         for k,v in self.total_attempts_by_provider.items():
             print(k, "success rate", "0 attempts" if v==0 else (v - self.total_failures_by_provider[k]) / v)
-    
-# def scan_token_uri():
-#     params = {"module": "contract", 
-#               "action":"getsourcecode",
-#               "address":CONTRACT,
-#               "tag":"latest",
-#               "apikey":ETHERSCAN_API_KEY}
-#     
-#     response = requests.request("GET", ETH_URL, headers=HEADERS, params=params)
-#     loads = json.loads(response.text)
-#     
-#     import sys;sys.exit()
-# scan_token_uri()
 
+
+def scan_batch_ipfs(tid, indices, base_uri):
+    trait_archives, metadatas = {}, {}
+    failures = 0
+    remaining = set(indices)
+    processed = set()
+    
+    min_timeout = .25
+    max_timeout = .5
+    max_iter = 10
+    dt = (max_timeout - min_timeout)/max_iter
+    for major_attempt in range(max_iter):
+        remaining.difference_update(processed)
+        print("major attempt {}. Remaining: {}".format(major_attempt, len(remaining)))
+        for index in remaining:
+            url = "{}/{}".format(base_uri, index)
+                
+            try:
+                params = {"api_key": SCRAPER_API_KEY, "url": url, "premium":"true"}
+                proxies = {"http": "http://scraperapi.country_code=us:{}@proxy-server.scraperapi.com:8001".format(SCRAPER_API_KEY)}
+                response = requests.request("GET", url, proxies=proxies, verify=False)
+                
+                loads = json.loads(response.text)
+                
+                traits = loads['attributes']
+                name = loads['name']
+            except Exception as e:
+                print("FAILED on index {}, response code {}, error {}, host {}".format(index, response.status_code if "response" in locals() else "--", e, url))
+                failures += 1
+                continue
+                
+            
+            metadatas[name] = traits
+            for i, trait in enumerate(traits):
+                trait_type = trait['trait_type']
+                trait_value = trait['value']
+                if trait_type not in trait_archives:
+                    trait_archives[trait_type] = {}
+                trait_values_dict = trait_archives[trait_type]
+                if trait_value not in trait_values_dict:
+                    trait_values_dict[trait_value] = 0
+                trait_values_dict[trait_value] += 1
+            print("processed index", index)
+            processed.add(index)
+    pickle.dump(
+        trait_archives,
+        open('trait_archives{}.pickle'.format(tid), 'wb'),
+        protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(
+        metadatas,
+        open('metadatas{}.pickle'.format(tid), 'wb'),
+        protocol=pickle.HIGHEST_PROTOCOL)
+    print("batch completed, successes: {}, failures: {}".format(len(indices)-failures, failures))
+
+def run_batches(base_uri, collection_size, process_count):
+    processes = []
+    batch_size = collection_size / process_count
+    for j in range(process_count):
+        start = 1 + int(j*(batch_size))
+        end = collection_size if j==process_count-1 else int((j+1)*(batch_size))
+        p = Process(target=scan_batch_ipfs, args=(j, range(start, end), base_uri))
+        processes.append(p)
+      
+    for p in processes:
+        p.start()
+    for p in processes:
+        p.join()
+
+    print("*******COMPLETED METADATA SCAN*******")
+    
+
+def get_contract_abi(contract_address, etherscan_api_key):
+    params = {"module": "contract", 
+              "action":"getabi",
+              "address":contract_address,
+              "tag":"latest",
+              "apikey":ETHERSCAN_API_KEY}
+    
+    response = requests.request("GET", ETH_URL, params=params)
+    loads = json.loads(response.text)
+    return loads["result"]
+        
 def url_from_ipfs(ipfs_address):
 
     if ( "http" in ipfs_address ):
@@ -208,95 +283,27 @@ def url_from_ipfs(ipfs_address):
 
     url = IPFS_GATEWAY + ipfs_address.strip("ipfs://")
     
-    return "https://basementdwellersnft.com/api/" #"https://api.themekaverse.com/meka" #url #"https://api.metasaurs.com/metadata" 
+    return url
 
-def scan_batch_ipfs(tid, indices, hash_):
-    trait_archives, metadatas = {}, {}
-    failures = 0
-    remaining = set(indices)
-    processed = set()
-    rotator = ProxyRotator()
-    print("Proxy table size: ", len(rotator.full_tables))
+def get_token_uri(contract_address, token_id, abi): 
+    w3 = Web3(Web3.HTTPProvider("{}/{}".format(WEB3_URL, WEB3_API_KEY)))
+    contract_address = Web3.toChecksumAddress(contract_address)
+    contract = w3.eth.contract(contract_address, abi=abi)
+    token_uri = contract.functions.tokenURI(token_id).call()
+    if "ipfs" in token_uri:
+        token_uri = url_from_ipfs(token_uri)
     
-    min_timeout = .25
-    max_timeout = 1
-    max_iter = 10
-    dt = (max_timeout - min_timeout)/max_iter
-    for major_attempt in range(max_iter):
-        remaining.difference_update(processed)
-        print("major attempt {}. Remaining: {}".format(major_attempt, len(remaining)))
-        for index in remaining:
-            hashed = url_from_ipfs(hash_)
-            url = "{}/{}".format(hashed, index)
-            proxy, provider = rotator.get_proxy()
-            if proxy is None:
-                proxies = {}
-            else:
-                proxies = {"http":proxy,"https":proxy}
-                
-            try:
-                response = requests.request(
-                    "GET", 
-                    url, 
-                    headers=get_header(), 
-                    timeout=min_timeout + dt*major_attempt,
-                    proxies=proxies)
-                loads = json.loads(response.text)
-                
-                traits = loads['attributes']
-                name = loads['name']
-                rotator.register_results(proxy, provider, True)
-            except Exception as e:
-                
-                print("FAILED on index {}, response code {}, error {}, host {}".format(index, response.status_code if "response" in locals() else "--", e, url))
-                failures += 1
-                rotator.register_results(proxy, provider, False)
-                continue
-                
-            
-            metadatas[name] = traits
-            for i, trait in enumerate(traits):
-                trait_type = trait['trait_type']
-                trait_value = trait['value']
-                if trait_type not in trait_archives:
-                    trait_archives[trait_type] = {}
-                trait_values_dict = trait_archives[trait_type]
-                if trait_value not in trait_values_dict:
-                    trait_values_dict[trait_value] = 0
-                trait_values_dict[trait_value] += 1
-            print("processed index", index)
-            processed.add(index)
-    rotator.print_results()
-    pickle.dump(
-        trait_archives,
-        open('trait_archives{}.pickle'.format(tid), 'wb'),
-        protocol=pickle.HIGHEST_PROTOCOL)
-    pickle.dump(
-        metadatas,
-        open('metadatas{}.pickle'.format(tid), 'wb'),
-        protocol=pickle.HIGHEST_PROTOCOL)
-    print("batch completed, successes: {}, failures: {}".format(len(indices)-failures, failures))
-
-def run_batches(collection_size, process_count):
-    processes = []
-    batch_size = collection_size / process_count
-    for j in range(process_count):
-        start = 1 + int(j*(batch_size))
-        end = collection_size if j==process_count-1 else int((j+1)*(batch_size))
-        p = Process(target=scan_batch_ipfs, args=(j, range(start, end), IPFS_HASH))
-        processes.append(p)
-      
-    for p in processes:
-        p.start()
-    for p in processes:
-        p.join()
+    base_uri = "/".join(token_uri.split("/")[:-1])
+    
+    return base_uri, token_uri
 
 
-def spin_until_reveal():
+def spin_until_reveal(contract_abi):
     main_rotator = ProxyRotator()
     is_live = False
     while not is_live:
         proxy, provider = main_rotator.get_proxy()
+        base_uri, token_uri = get_token_uri(CONTRACT, np.random.randint(1,20), contract_abi)
         if proxy is None:
             proxies = {}
         else:
@@ -304,8 +311,7 @@ def spin_until_reveal():
         try:
             response = requests.request(
                     "GET",
-                    "https://basementdwellersnft.com/api/{}".format(np.random.randint(20)), 
-#                     "https://ipfs.io/ipfs/{}/{}".format(IPFS_HASH, np.random.randint(20)), 
+                    token_uri,
                     headers=get_header(), 
                     timeout=1,
                     proxies=proxies)
@@ -319,17 +325,18 @@ def spin_until_reveal():
             main_rotator.register_results(proxy, provider, False)
             time.sleep(5)
             
-    print("{} REVEAL LIVE, BEGINNING SCAN".format(datetime.datetime.now()))
+    print("{} REVEAL LIVE on {}, BEGINNING SCAN".format(datetime.datetime.now(), token_uri))
+    return base_uri, token_uri
     
 if __name__ == "__main__":
-
+    
     collection_size = 9999
     start = datetime.datetime.now()
-    spin_until_reveal()
-    process_count = 32#os.cpu_count()
-    run_batches(collection_size, process_count)
+    contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
+    base_uri, token_uri = spin_until_reveal(contract_abi)
+    process_count = 50
+    run_batches(base_uri, collection_size, process_count)
     
-    print("COMPLETED")
     trait_archives = {}
     metadatas = {}
     for i in range(process_count):
