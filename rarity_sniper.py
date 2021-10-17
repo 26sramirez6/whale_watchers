@@ -47,14 +47,9 @@ def request_direct(url):
     params = {"api_key": SCRAPER_API_KEY, "url": url, "premium":"true"}
     response = requests.request("GET", url, params=params, verify=False)
     return response
-
-class SharedState:
-    def __init__(self):
-        self.trait_archives = {}
-        self.metadatas = {}
         
 
-def scan_batch(tid, mutex, shared, indices, base_uri, token_idx_format):
+def scan_batch(tid, indices, base_uri, token_idx_format):
     trait_archives, metadatas = {}, {}
     failures = 0
     remaining = set(indices)
@@ -96,41 +91,25 @@ def scan_batch(tid, mutex, shared, indices, base_uri, token_idx_format):
                 trait_values_dict[trait_value] += 1
             print("processed index", index)
             processed.add(index)
-    mutex.acquire()
-    try:
-        for k,v in trait_archives.items():
-            if k not in shared.trait_archives:
-                shared.trait_archives[k] = {}
-            trait_archive = shared.trait_archives[k]
-            for name, count in v.items():
-                if name not in trait_archive:
-                    trait_archive[name] = 0
-                trait_archive[name] += count
-                
-        shared.metadatas.update(metadatas)
-    finally:
-        mutex.release()
         
-#     pickle.dump(
-#         trait_archives,
-#         open('trait_archives{}.pickle'.format(tid), 'wb'),
-#         protocol=pickle.HIGHEST_PROTOCOL)
-#     pickle.dump(
-#         metadatas,
-#         open('metadatas{}.pickle'.format(tid), 'wb'),
-#         protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(
+        trait_archives,
+        open('trait_archives{}.pickle'.format(tid), 'wb'),
+        protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(
+        metadatas,
+        open('metadatas{}.pickle'.format(tid), 'wb'),
+        protocol=pickle.HIGHEST_PROTOCOL)
 
-    print("batch completed, successes: {}, failures: {}".format(len(indices)-failures, failures))
+    print("batch completed")
 
 def generate_metadatas(base_uri, token_idx_format, collection_size, process_count):
     processes = []
     batch_size = collection_size / process_count
-    shared = SharedState()
-    mutex = Lock()
     for j in range(process_count):
         start = 1 + int(j*(batch_size))
         end = collection_size if j==process_count-1 else int((j+1)*(batch_size))
-        p = Process(target=scan_batch, args=(j, mutex, shared, range(start, end), base_uri, token_idx_format))
+        p = Process(target=scan_batch, args=(j, range(start, end), base_uri, token_idx_format))
         processes.append(p)
       
     for p in processes:
@@ -138,24 +117,40 @@ def generate_metadatas(base_uri, token_idx_format, collection_size, process_coun
     for p in processes:
         p.join()
         
+    trait_archives = {}
+    metadatas = {}
+    for i in range(process_count):
+        thread_traits_archive = pickle.load(open('trait_archives{}.pickle'.format(i), 'rb'))
+        thread_metadatas = pickle.load(open('metadatas{}.pickle'.format(i), 'rb'))
+        
+        metadatas.update(thread_metadatas)
+        for k,v in thread_traits_archive.items():
+            if k not in trait_archives:
+                trait_archives[k] = {}
+            trait_archive = trait_archives[k]
+            for name, count in v.items():
+                if name not in trait_archive:
+                    trait_archive[name] = 0
+                trait_archive[name] += count
+    
     # identify unique traits, correct the metadatas by adding missing global categories
-    trait_categories = shared.trait_archives.keys()
-    for trait, options in shared.trait_archives.items():
+    trait_categories = trait_archives.keys()
+    for trait, options in trait_archives.items():
         trait_presence_count = sum(options.values())
         missing = collection_size - trait_presence_count
         options["None"] = missing
-    for token, attributes in shared.metadatas.items():
+    for token, attributes in metadatas.items():
         token_attributes = set([attr["trait_type"] for attr in attributes])
         for category in trait_categories:
             if category not in token_attributes:
                 attributes.append({"trait_type" : category, "value": "None"})
     
     pickle.dump(
-        shared.trait_archives,
+        trait_archives,
         open('trait_archives.pickle', 'wb'),
         protocol=pickle.HIGHEST_PROTOCOL)
     pickle.dump(
-        shared.metadatas,
+        metadatas,
         open('metadatas.pickle', 'wb'),
         protocol=pickle.HIGHEST_PROTOCOL)
     
