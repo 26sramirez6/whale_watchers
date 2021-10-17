@@ -23,12 +23,18 @@ from web3 import Web3
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+TESTS = {
+    "metasaur": "0xf7143ba42d40eaeb49b88dac0067e54af042e963",
+    "svs": "0x219b8ab790decc32444a6600971c7c3718252539",
+    "basement": "0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA",
+    "mekaverse": "0x9a534628b4062e123ce7ee2222ec20b86e16ca8f"}
+
 ETHERSCAN_API_KEY = "4IV18GY7DMT29HR6PMGXB9EZUZ1KZYJGX2"
 OS_URL = "https://api.opensea.io/api/v1/events"
 ETH_URL = "https://api.etherscan.io/api"
 QRY_STR = {"only_opensea":"false","offset":"0","limit":"20", "event_type":"successful"}
 HEADERS = {"Accept": "application/json"}
-CONTRACT = "0x219b8ab790decc32444a6600971c7c3718252539" #"0xf7143ba42d40eaeb49b88dac0067e54af042e963" #"0xf7143ba42d40eaeb49b88dac0067e54af042e963" #"0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA"
+CONTRACT = TESTS["basement"] 
 WEB3_URL = "https://mainnet.infura.io/v3" #"wss://mainnet.infura.io/ws/v3"
 WEB3_API_KEY = "76e9e5d5de124620a24a3430699db0c3"
 SCRAPER_API_KEY = "40b2cc4259dffdd12466035827b4c3e5"
@@ -37,7 +43,7 @@ SCRAPER_API_PROXY_POOL = "http://scraperapi.{}:{}@proxy-server.scraperapi.com:80
 
 
 def request_through_proxy_pool(url, premium=False):
-    params = {"country_code": "us"} #, "premium":"true"}
+    params = {"country_code": "us"}
     if premium: params["premium"] = "true"
 
     params_str = ".".join(["{}={}".format(k,v) for k, v in params.items()])
@@ -45,11 +51,49 @@ def request_through_proxy_pool(url, premium=False):
     response = requests.request("GET", url, proxies=proxies, verify=False)
     return response
 
-def request_direct(url):
-    params = {"api_key": SCRAPER_API_KEY, "url": url, "premium":"true"}
+def request_direct(url, premium=False):
+    params = {"api_key": SCRAPER_API_KEY, "url": url}
+    if premium: params["premium"] = "true"
     response = requests.request("GET", url, params=params, verify=False)
     return response
+
+
+class IPFSRotator:
+    GATEWAYS = [
+         "https://cloudflare-ipfs.com/ipfs/",
+         "http://ipfs.io/ipfs/",
+         "https://ipfs.infura.io:5001/api/v0/cat?arg=",
+         "https://ipfs.tubby.cloud/ipfs/",
+         "https://ravencoinipfs-gateway.com/ipfs/",
+         "https://ipfs.adatools.io/ipfs/",
+         "https://ipfs.eth.aragon.network/ipfs/",
+         "https://gateway.pinata.cloud/",
+         "https://gateway.ipfs.io/ipfs/",
+         "https://gateway.originprotocol.com/ipfs/",
+    ]
+
+    def __init__(self, ipfs_with_hash, probs=None):
+        self.probs = [1./len(self.GATEWAYS) for _ in self.GATEWAYS] if probs is None else probs            
+        self.hash = ipfs_with_hash.split("/")[-1] if "ipfs" in ipfs_with_hash else ""
+        self.probs = probs
+        self.success = OrderedDict([(gateway,1) for gateway in self.GATEWAYS])
+        self.failure = OrderedDict([(gateway,1) for gateway in self.GATEWAYS])
+        self.last_gateway = self.GATEWAYS[0]
         
+    def get_base_uri(self):
+        success_rates = np.array([float(self.success[g]) / float(self.success[g]+self.failure[g]) for g in self.GATEWAYS])
+        success_rates *= success_rates
+        probs = success_rates / success_rates.sum()
+        gateway = np.random.choice(self.GATEWAYS, p=probs)
+        self.last_gateway = gateway
+        return "{}{}".format(gateway, self.hash)
+    
+    def register_result(self, success):
+        if success:
+            self.success[self.last_gateway] += 1
+        else:
+            self.failure[self.last_gateway] += 1
+            
 
 def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
     trait_archives, metadatas = {}, {}
@@ -69,10 +113,12 @@ def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
         print("major attempt {}. Remaining: {}".format(major_attempt, len(remaining)))
         for index in remaining:
             
-            if is_ipfs:
-                base_uri = ipfs_rotator.get_gateway()
+            if is_ipfs: 
+                final_base = ipfs_rotator.get_base_uri()
+            else:
+                final_base = base_uri
             
-            url = "{}/{}".format(base_uri, token_idx_format.format(index))
+            url = "{}/{}".format(final_base, token_idx_format.format(index))
             try:
                 response = request_through_proxy_pool(url)
                 loads = json.loads(response.text)                
@@ -81,8 +127,9 @@ def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
             except Exception as e:
                 print("FAILED on index {}, response code {}, error {}, host {}".format(index, response.status_code if "response" in locals() else "--", e, url))
                 failures += 1
+                ipfs_rotator.register_result(False)
                 continue
-            
+            ipfs_rotator.register_result(True)
             # for when the mess up metadata
             if isinstance(name, list):
                 name = name[0]
@@ -177,39 +224,6 @@ def get_contract_abi(contract_address, etherscan_api_key):
     return loads["result"]
 
 
-class IPFSRotator
-    IPFS_GATEWAY = [
-         "https://cloudflare-ipfs.com/ipfs/",
-         "http://ipfs.io/ipfs/",
-         "https://ipfs.infura.io:5001/api/v0/cat?arg=",
-         "https://ipfs.tubby.cloud/ipfs/",
-         "https://ravencoinipfs-gateway.com/ipfs/",
-         "https://ipfs.adatools.io/ipfs/",
-         "https://ipfs.eth.aragon.network/ipfs/",
-         "https://gateway.pinata.cloud/",
-         "https://gateway.ipfs.io/ipfs/",
-         "https://gateway.originprotocol.com/ipfs/",
-    ]
-
-    def __init__(self, base_uri, probs=[1./len(IPFS_GATEWAY) for _ in IPFS_GATEWAY]):
-        self.hash = base_uri.split("/")[-2] if "ipfs" in base_uri else ""
-        self.probs = probs
-        self.success = OrderedDict([(gateway,1) for gateway in self.IPFS_GATEWAY])
-        self.failure = OrderedDict([(gateway,1) for gateway in self.IPFS_GATEWAY])
-
-    def get_base_uri(self):
-        success_rates = np.array([float(self.success[g]) / float(self.success[g]+self.failure[g]) for g in self.IPFS_GATEWAY])
-        success_rates *= success_rates
-        probs = success_rates / success_rates.sum()
-        gateway = np.random.choice(self.IPFS_GATEWAY, p=probs)
-        return "{}{}".format(gateway, self.hash)
-    
-    def register_result(gateway, succes):
-        if success:
-            self.success[gateway] += 1
-        else:
-            self.failure[gateway] += 1
-
 
 def get_token_uri(contract_address, token_id, abi): 
     w3 = Web3(Web3.HTTPProvider("{}/{}".format(WEB3_URL, WEB3_API_KEY)))
@@ -217,6 +231,10 @@ def get_token_uri(contract_address, token_id, abi):
     contract = w3.eth.contract(contract_address, abi=abi)
     token_uri = contract.functions.tokenURI(token_id).call()
     is_ipfs = "ipfs" in token_uri
+    if is_ipfs:
+        if "http" not in token_uri:
+            token_uri = np.random.choice(IPFSRotator.GATEWAYS[:2]) + token_uri.strip("ipfs://")
+    
     
     base_uri = "/".join(token_uri.split("/")[:-1])
     
@@ -290,7 +308,7 @@ if __name__ == "__main__":
     start = datetime.datetime.now()
     contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
     base_uri, token_uri, token_idx_format, is_ipfs = spin_until_reveal(contract_abi)
-    process_count = 100
+    process_count = 4
     generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, process_count)
     generate_rankings()
     
