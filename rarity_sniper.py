@@ -36,8 +36,10 @@ SCRAPER_API_BASE = "http://api.scraperapi.com"
 SCRAPER_API_PROXY_POOL = "http://scraperapi.{}:{}@proxy-server.scraperapi.com:8001"
 
 
-def request_through_proxy_pool(url):
-    params = {"country_code": "us", "premium":"true"}
+def request_through_proxy_pool(url, premium=False):
+    params = {"country_code": "us"} #, "premium":"true"}
+    if premium: params["premium"] = "true"
+
     params_str = ".".join(["{}={}".format(k,v) for k, v in params.items()])
     proxies = {"http": SCRAPER_API_PROXY_POOL.format(params_str, SCRAPER_API_KEY)}
     response = requests.request("GET", url, proxies=proxies, verify=False)
@@ -49,7 +51,7 @@ def request_direct(url):
     return response
         
 
-def scan_batch(tid, indices, base_uri, token_idx_format):
+def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
     trait_archives, metadatas = {}, {}
     failures = 0
     remaining = set(indices)
@@ -58,13 +60,19 @@ def scan_batch(tid, indices, base_uri, token_idx_format):
     min_timeout = .25
     max_timeout = .5
     max_iter = 10
+    
+    ipfs_rotator = IPFSRotator(base_uri)
+
     dt = (max_timeout - min_timeout)/max_iter
     for major_attempt in range(max_iter):
         remaining.difference_update(processed)
         print("major attempt {}. Remaining: {}".format(major_attempt, len(remaining)))
         for index in remaining:
+            
+            if is_ipfs:
+                base_uri = ipfs_rotator.get_gateway()
+            
             url = "{}/{}".format(base_uri, token_idx_format.format(index))
-                
             try:
                 response = request_through_proxy_pool(url)
                 loads = json.loads(response.text)                
@@ -103,13 +111,13 @@ def scan_batch(tid, indices, base_uri, token_idx_format):
 
     print("batch completed")
 
-def generate_metadatas(base_uri, token_idx_format, collection_size, process_count):
+def generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, process_count):
     processes = []
     batch_size = collection_size / process_count
     for j in range(process_count):
         start = 1 + int(j*(batch_size))
         end = collection_size if j==process_count-1 else int((j+1)*(batch_size))
-        p = Process(target=scan_batch, args=(j, range(start, end), base_uri, token_idx_format))
+        p = Process(target=scan_batch, args=(j, range(start, end), base_uri, token_idx_format, is_ipfs))
         processes.append(p)
       
     for p in processes:
@@ -153,7 +161,7 @@ def generate_metadatas(base_uri, token_idx_format, collection_size, process_coun
         metadatas,
         open('metadatas.pickle', 'wb'),
         protocol=pickle.HIGHEST_PROTOCOL)
-    
+
     print("*******COMPLETED METADATA SCAN*******")
     
 
@@ -167,49 +175,61 @@ def get_contract_abi(contract_address, etherscan_api_key):
     response = requests.request("GET", ETH_URL, params=params)
     loads = json.loads(response.text)
     return loads["result"]
-        
-def url_from_ipfs(ipfs_address):
-    if ( "http" in ipfs_address ):
-        return ipfs_address
 
-    IPFS_GATEWAY = np.random.choice(
-        [
-#         "https://cloudflare-ipfs.com/ipfs/",
-        "http://ipfs.io/ipfs/",
-#         "https://ipfs.infura.io:5001/api/v0/cat?arg=",
-#         "https://ipfs.tubby.cloud/ipfs/",
-#         "https://ravencoinipfs-gateway.com/ipfs/",
-#         "https://ipfs.adatools.io/ipfs/",
-#         "https://ipfs.eth.aragon.network/ipfs/",
-#         "https://gateway.pinata.cloud/",
-#         "https://gateway.ipfs.io/ipfs/",
-#         "https://gateway.originprotocol.com/ipfs/",
-        ]
-    )
 
-    url = IPFS_GATEWAY + ipfs_address.strip("ipfs://")
-    return url
+class IPFSRotator
+    IPFS_GATEWAY = [
+         "https://cloudflare-ipfs.com/ipfs/",
+         "http://ipfs.io/ipfs/",
+         "https://ipfs.infura.io:5001/api/v0/cat?arg=",
+         "https://ipfs.tubby.cloud/ipfs/",
+         "https://ravencoinipfs-gateway.com/ipfs/",
+         "https://ipfs.adatools.io/ipfs/",
+         "https://ipfs.eth.aragon.network/ipfs/",
+         "https://gateway.pinata.cloud/",
+         "https://gateway.ipfs.io/ipfs/",
+         "https://gateway.originprotocol.com/ipfs/",
+    ]
+
+    def __init__(self, base_uri, probs=[1./len(IPFS_GATEWAY) for _ in IPFS_GATEWAY]):
+        self.hash = base_uri.split("/")[-2] if "ipfs" in base_uri else ""
+        self.probs = probs
+        self.success = OrderedDict([(gateway,1) for gateway in self.IPFS_GATEWAY])
+        self.failure = OrderedDict([(gateway,1) for gateway in self.IPFS_GATEWAY])
+
+    def get_base_uri(self):
+        success_rates = np.array([float(self.success[g]) / float(self.success[g]+self.failure[g]) for g in self.IPFS_GATEWAY])
+        success_rates *= success_rates
+        probs = success_rates / success_rates.sum()
+        gateway = np.random.choice(self.IPFS_GATEWAY, p=probs)
+        return "{}{}".format(gateway, self.hash)
+    
+    def register_result(gateway, succes):
+        if success:
+            self.success[gateway] += 1
+        else:
+            self.failure[gateway] += 1
+
 
 def get_token_uri(contract_address, token_id, abi): 
     w3 = Web3(Web3.HTTPProvider("{}/{}".format(WEB3_URL, WEB3_API_KEY)))
     contract_address = Web3.toChecksumAddress(contract_address)
     contract = w3.eth.contract(contract_address, abi=abi)
     token_uri = contract.functions.tokenURI(token_id).call()
-    if "ipfs" in token_uri:
-        token_uri = url_from_ipfs(token_uri)
+    is_ipfs = "ipfs" in token_uri
     
     base_uri = "/".join(token_uri.split("/")[:-1])
     
     split = token_uri.split("/")
     base_uri = "/".join(split[:-1])
     token_idx_format = split[-1].replace(str(token_id), "{}")
-    return base_uri, token_uri, token_idx_format
+    return base_uri, token_uri, token_idx_format, is_ipfs
 
 
 def spin_until_reveal(contract_abi):
     is_live = False
     while not is_live:
-        base_uri, token_uri, token_idx_format = get_token_uri(CONTRACT, np.random.randint(1,20), contract_abi)
+        base_uri, token_uri, token_idx_format, is_ipfs = get_token_uri(CONTRACT, np.random.randint(1,20), contract_abi)
         try:
             response = request_direct(token_uri)
             loads = json.loads(response.text)
@@ -221,7 +241,7 @@ def spin_until_reveal(contract_abi):
             time.sleep(5)
             
     print("{} REVEAL LIVE on {}, BEGINNING SCAN".format(datetime.datetime.now(), token_uri))
-    return base_uri, token_uri, token_idx_format
+    return base_uri, token_uri, token_idx_format, is_ipfs
 
 def generate_rankings():
     specific_trait_rarities = {}
@@ -269,9 +289,9 @@ if __name__ == "__main__":
     collection_size = 8888
     start = datetime.datetime.now()
     contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
-    base_uri, token_uri, token_idx_format = spin_until_reveal(contract_abi)
-    process_count = 4
-    generate_metadatas(base_uri, token_idx_format, collection_size, process_count)
+    base_uri, token_uri, token_idx_format, is_ipfs = spin_until_reveal(contract_abi)
+    process_count = 100
+    generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, process_count)
     generate_rankings()
     
     
