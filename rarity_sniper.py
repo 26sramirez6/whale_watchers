@@ -75,7 +75,6 @@ class IPFSRotator:
     def __init__(self, ipfs_with_hash, probs=None):
         self.probs = [1./len(self.GATEWAYS) for _ in self.GATEWAYS] if probs is None else probs            
         self.hash = ipfs_with_hash.split("/")[-1] if "ipfs" in ipfs_with_hash else ""
-        self.probs = probs
         self.success = OrderedDict([(gateway,1) for gateway in self.GATEWAYS])
         self.failure = OrderedDict([(gateway,1) for gateway in self.GATEWAYS])
         self.last_gateway = self.GATEWAYS[0]
@@ -111,21 +110,22 @@ def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
     for major_attempt in range(max_iter):
         remaining.difference_update(processed)
         print("major attempt {}. Remaining: {}".format(major_attempt, len(remaining)))
-        for index in remaining:
+        for token_id in remaining:
             
             if is_ipfs: 
                 final_base = ipfs_rotator.get_base_uri()
             else:
                 final_base = base_uri
             
-            url = "{}/{}".format(final_base, token_idx_format.format(index))
+            url = "{}/{}".format(final_base, token_idx_format.format(token_id))
+            print("hitting {}".format(url))
             try:
                 response = request_through_proxy_pool(url)
                 loads = json.loads(response.text)                
                 traits = loads['attributes']
                 name = loads['name']
             except Exception as e:
-                print("FAILED on index {}, response code {}, error {}, host {}".format(index, response.status_code if "response" in locals() else "--", e, url))
+                print("FAILED on token_id {}, response code {}, error {}, host {}".format(token_id, response.status_code if "response" in locals() else "--", e, url))
                 failures += 1
                 ipfs_rotator.register_result(False)
                 continue
@@ -133,8 +133,7 @@ def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
             # for when the mess up metadata
             if isinstance(name, list):
                 name = name[0]
-                
-            metadatas[name] = traits
+            metadatas[name] = (token_id, traits)
             for i, trait in enumerate(traits):
                 trait_type = trait['trait_type']
                 trait_value = trait['value']
@@ -144,8 +143,8 @@ def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
                 if trait_value not in trait_values_dict:
                     trait_values_dict[trait_value] = 0
                 trait_values_dict[trait_value] += 1
-            print("processed index", index)
-            processed.add(index)
+            print("processed token_id", token_id)
+            processed.add(token_id)
         
     pickle.dump(
         trait_archives,
@@ -194,7 +193,7 @@ def generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, pro
         trait_presence_count = sum(options.values())
         missing = collection_size - trait_presence_count
         options["None"] = missing
-    for token, attributes in metadatas.items():
+    for _, (_, attributes) in metadatas.items():
         token_attributes = set([attr["trait_type"] for attr in attributes])
         for category in trait_categories:
             if category not in token_attributes:
@@ -210,6 +209,8 @@ def generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, pro
         protocol=pickle.HIGHEST_PROTOCOL)
 
     print("*******COMPLETED METADATA SCAN*******")
+    
+    return trait_archives, metadatas
     
 
 def get_contract_abi(contract_address, etherscan_api_key):
@@ -261,7 +262,7 @@ def spin_until_reveal(contract_abi):
     print("{} REVEAL LIVE on {}, BEGINNING SCAN".format(datetime.datetime.now(), token_uri))
     return base_uri, token_uri, token_idx_format, is_ipfs
 
-def generate_rankings():
+def generate_rankings(trait_archives, metadatas):
     specific_trait_rarities = {}
     average_trait_rarities = {}
     for trait, options in trait_archives.items():
@@ -278,7 +279,7 @@ def generate_rankings():
    
    
     token_rarities = []
-    for name, attributes in metadatas.items():
+    for name, (_, attributes) in metadatas.items():
         power_score = 1
         min_rarity_trait_score = np.inf
         for trait in attributes:
@@ -287,29 +288,34 @@ def generate_rankings():
             if rarity < min_rarity_trait_score:
                 min_rarity_trait_score = rarity
                 rarest_trait = (trait['trait_type'], trait['value'])
-        token_rarities.append((name, power_score, rarest_trait))
+        token_rarities.append((name, power_score, rarest_trait, attributes))
    
     power_ranking = sorted(token_rarities, key=lambda x: x[1])
    
-    rankings = ["Power Rank {}: {}, Rarest trait: {}".format(i, power_ranking[i][0], power_ranking[i][2]) for i in range(len(power_ranking))]
-    for rank in rankings:
+    printout = ["Power Rank {}: {}, Rarest trait: {}".format(i, power_ranking[i][0], power_ranking[i][2]) for i in range(len(power_ranking))]
+    for rank in printout:
         print(rank.encode("utf-8"))
     with open("rankings.txt", "wb") as f:
-        f.write("\n".join(rankings).encode("utf-8"))
+        f.write("\n".join(printout).encode("utf-8"))
+    pickle.dump(
+        power_ranking,
+        open('rankings.pickle', 'wb'),
+        protocol=pickle.HIGHEST_PROTOCOL)
     print("Runtime: {}".format((datetime.datetime.now() - start).total_seconds()))
+    
+    return power_ranking
 
-
-def map_against_os():
+def map_against_os(rankings, metadatas):
     return
     
     
 if __name__ == "__main__":
-    collection_size = 8888
+    collection_size = 100
     start = datetime.datetime.now()
     contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
     base_uri, token_uri, token_idx_format, is_ipfs = spin_until_reveal(contract_abi)
     process_count = 4
-    generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, process_count)
-    generate_rankings()
+    trait_archives, metadatas = generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, process_count)
+    generate_rankings(trait_archives, metadatas)
     
     
