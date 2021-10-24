@@ -20,6 +20,7 @@ from lxml.html import fromstring
 from multiprocessing import Pool, Process, Manager, Lock
 import pickle
 from web3 import Web3
+from proxy import request_direct, request_through_proxy_pool
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -34,29 +35,9 @@ OS_URL = "https://api.opensea.io/api/v1/events"
 ETH_URL = "https://api.etherscan.io/api"
 QRY_STR = {"only_opensea":"false","offset":"0","limit":"20", "event_type":"successful"}
 HEADERS = {"Accept": "application/json"}
-CONTRACT = TESTS["basement"] 
+CONTRACT = TESTS["svs"] 
 WEB3_URL = "https://mainnet.infura.io/v3" #"wss://mainnet.infura.io/ws/v3"
 WEB3_API_KEY = "76e9e5d5de124620a24a3430699db0c3"
-SCRAPER_API_KEY = "40b2cc4259dffdd12466035827b4c3e5"
-SCRAPER_API_BASE = "http://api.scraperapi.com"
-SCRAPER_API_PROXY_POOL = "http://scraperapi.{}:{}@proxy-server.scraperapi.com:8001"
-
-
-def request_through_proxy_pool(url, premium=False):
-    params = {"country_code": "us"}
-    if premium: params["premium"] = "true"
-
-    params_str = ".".join(["{}={}".format(k,v) for k, v in params.items()])
-    proxies = {"http": SCRAPER_API_PROXY_POOL.format(params_str, SCRAPER_API_KEY)}
-    response = requests.request("GET", url, proxies=proxies, verify=False)
-    return response
-
-def request_direct(url, premium=False):
-    params = {"api_key": SCRAPER_API_KEY, "url": url}
-    if premium: params["premium"] = "true"
-    response = requests.request("GET", url, params=params, verify=False)
-    return response
-
 
 class IPFSRotator:
     GATEWAYS = [
@@ -310,7 +291,7 @@ def map_against_os(rankings, metadatas):
     
     
 if __name__ == "__main__":
-    collection_size = 100
+    collection_size = 8888
     start = datetime.datetime.now()
     contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
     base_uri, token_uri, token_idx_format, is_ipfs = spin_until_reveal(contract_abi)
