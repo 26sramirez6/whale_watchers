@@ -230,7 +230,13 @@ def get_token_uri(contract_address, token_id, abi):
 def spin_until_reveal(contract_abi):
     is_live = False
     while not is_live:
-        base_uri, token_uri, token_idx_format, is_ipfs = get_token_uri(CONTRACT, np.random.randint(1,20), contract_abi)
+        try:
+            base_uri, token_uri, token_idx_format, is_ipfs = get_token_uri(CONTRACT, np.random.randint(1,20), contract_abi)
+        except Exception:
+            print("exception on token query, skipping")
+            time.sleep(5)
+            continue
+            
         try:
             response = request_direct(token_uri)
             loads = json.loads(response.text)

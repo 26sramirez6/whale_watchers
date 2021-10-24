@@ -101,12 +101,12 @@ def scan_buyer(addr, api_key):
         if loads["message"]=="OK":
             eth_balance = decimal.Decimal(loads["result"]) / GWEI_CONVERSION
             bluechip_score = scan_for_bluechips(addr)
-            if eth_balance > 100 or (eth_balance>50 and bluechip_score>10):
+            if eth_balance > 75 or (eth_balance>50 and bluechip_score>10):
                 return BuyerScan(addr, eth_balance, True, bluechip_score)
             else:
                 break            
         else:
-            time.sleep(.1)
+            time.sleep(1)
             
     return BuyerScan(addr, -1, False, -1)
     
