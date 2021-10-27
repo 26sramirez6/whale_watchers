@@ -29,14 +29,15 @@ TESTS = {
     "svs_bat":  "0xee0ba89699a3dd0f08cb516c069d81a762f65e56",
     "svs": "0x219b8ab790decc32444a6600971c7c3718252539",
     "basement": "0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA",
-    "mekaverse": "0x9a534628b4062e123ce7ee2222ec20b86e16ca8f"}
+    "mekaverse": "0x9a534628b4062e123ce7ee2222ec20b86e16ca8f",
+    "boonji": "0x4cd0ea8b1bDb5ab9249d96cCF3d8A0d3aDa2Bc76"}
 
 ETHERSCAN_API_KEY = "4IV18GY7DMT29HR6PMGXB9EZUZ1KZYJGX2"
 OS_URL = "https://api.opensea.io/api/v1/events"
 ETH_URL = "https://api.etherscan.io/api"
 QRY_STR = {"only_opensea":"false","offset":"0","limit":"20", "event_type":"successful"}
 HEADERS = {"Accept": "application/json"}
-CONTRACT = TESTS["svs_bat"] 
+CONTRACT = TESTS["boonji"] 
 WEB3_URL = "https://mainnet.infura.io/v3" #"wss://mainnet.infura.io/ws/v3"
 WEB3_API_KEY = "76e9e5d5de124620a24a3430699db0c3"
 
@@ -302,7 +303,7 @@ if __name__ == "__main__":
     start = datetime.datetime.now()
     contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
     base_uri, token_uri, token_idx_format, is_ipfs = spin_until_reveal(contract_abi)
-    process_count = 100
+    process_count = 4
     trait_archives, metadatas = generate_metadatas(base_uri, token_idx_format, is_ipfs, collection_size, process_count)
     generate_rankings(trait_archives, metadatas)
     

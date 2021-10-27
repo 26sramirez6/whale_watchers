@@ -8,8 +8,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from proxy import request_direct, request_through_proxy_pool
 
+TESTS = {
+    "metasaur": "0xf7143ba42d40eaeb49b88dac0067e54af042e963",
+    "svs_bat":  "0xee0ba89699a3dd0f08cb516c069d81a762f65e56",
+    "svs": "0x219b8ab790decc32444a6600971c7c3718252539",
+    "basement": "0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA",
+    "mekaverse": "0x9a534628b4062e123ce7ee2222ec20b86e16ca8f",
+    "boonji": "0x4cd0ea8b1bDb5ab9249d96cCF3d8A0d3aDa2Bc76"}
 
-CONTRACT = "0xee0ba89699a3dd0f08cb516c069d81a762f65e56"
+CONTRACT = TESTS["boonji"]
 GWEI_CONVERSION = decimal.Decimal("1000000000000000000")
 
 
