@@ -14,9 +14,10 @@ TESTS = {
     "svs": "0x219b8ab790decc32444a6600971c7c3718252539",
     "basement": "0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA",
     "mekaverse": "0x9a534628b4062e123ce7ee2222ec20b86e16ca8f",
-    "boonji": "0x4cd0ea8b1bDb5ab9249d96cCF3d8A0d3aDa2Bc76"}
+    "boonji": "0x4cd0ea8b1bDb5ab9249d96cCF3d8A0d3aDa2Bc76",
+    "divine": "0xc631164B6CB1340B5123c9162f8558c866dE1926"}
 
-CONTRACT = TESTS["boonji"]
+CONTRACT = TESTS["divine"]
 GWEI_CONVERSION = decimal.Decimal("1000000000000000000")
 
 
@@ -36,7 +37,7 @@ def get_os_bin(tid, contract_address, tokenids, bins):
         for batch in remaining_batches:
             params = {
               "asset_contract_address": contract_address,
-              "limit": min(50, len(batch)),
+              "limit": min(LIMIT_SIZE, len(batch)),
               "token_ids": batch}
             try:
                 response = request_through_proxy_pool(OPENSEA_ASSETS, params=params)

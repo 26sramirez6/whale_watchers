@@ -30,14 +30,15 @@ TESTS = {
     "svs": "0x219b8ab790decc32444a6600971c7c3718252539",
     "basement": "0x9A95eCEe5161b888fFE9Abd3D920c5D38e8539dA",
     "mekaverse": "0x9a534628b4062e123ce7ee2222ec20b86e16ca8f",
-    "boonji": "0x4cd0ea8b1bDb5ab9249d96cCF3d8A0d3aDa2Bc76"}
+    "boonji": "0x4cd0ea8b1bDb5ab9249d96cCF3d8A0d3aDa2Bc76",
+    "divine": "0xc631164B6CB1340B5123c9162f8558c866dE1926"}
 
 ETHERSCAN_API_KEY = "4IV18GY7DMT29HR6PMGXB9EZUZ1KZYJGX2"
 OS_URL = "https://api.opensea.io/api/v1/events"
 ETH_URL = "https://api.etherscan.io/api"
 QRY_STR = {"only_opensea":"false","offset":"0","limit":"20", "event_type":"successful"}
 HEADERS = {"Accept": "application/json"}
-CONTRACT = TESTS["boonji"] 
+CONTRACT = TESTS["divine"] 
 WEB3_URL = "https://mainnet.infura.io/v3" #"wss://mainnet.infura.io/ws/v3"
 WEB3_API_KEY = "76e9e5d5de124620a24a3430699db0c3"
 
@@ -117,6 +118,7 @@ def scan_batch(tid, indices, base_uri, token_idx_format, is_ipfs):
             if isinstance(name, list):
                 name = name[0]
             metadatas[name] = (token_id, traits)
+            traits.append({"trait_type": "trait_count", "value" : len(traits)})
             for i, trait in enumerate(traits):
                 trait_type = trait['trait_type']
                 trait_value = trait['value']
@@ -243,7 +245,7 @@ def spin_until_reveal(contract_abi):
             loads = json.loads(response.text)
             traits = loads['attributes']
             name = loads['name']
-            is_live = True
+            is_live = len(traits) > 1
         except Exception:
             print("{}: reveal not live, sleeping".format(datetime.datetime.now()))
             time.sleep(5)
@@ -269,7 +271,7 @@ def generate_rankings(trait_archives, metadatas):
    
     token_rarities = []
     for name, (_, attributes) in metadatas.items():
-        power_score = 1
+        power_score = 1000000
         min_rarity_trait_score = np.inf
         for trait in attributes:
             rarity = specific_trait_rarities[trait['trait_type']][trait['value']]
@@ -299,7 +301,7 @@ def map_against_os(rankings, metadatas):
     
     
 if __name__ == "__main__":
-    collection_size = 8888
+    collection_size = 100
     start = datetime.datetime.now()
     contract_abi = get_contract_abi(CONTRACT, ETHERSCAN_API_KEY)
     base_uri, token_uri, token_idx_format, is_ipfs = spin_until_reveal(contract_abi)
