@@ -229,14 +229,16 @@ def get_token_uri(contract_address, token_id, abi):
     token_idx_format = split[-1].replace(str(token_id), "{}")
     return base_uri, token_uri, token_idx_format, is_ipfs
 
-
+np.random.seed(86648)
 def spin_until_reveal(contract_abi):
     is_live = False
+    attempts = 1
     while not is_live:
+        rand_token = (attempts + 1) % 20
         try:
-            base_uri, token_uri, token_idx_format, is_ipfs = get_token_uri(CONTRACT, np.random.randint(1,20), contract_abi)
-        except Exception:
-            print("exception on token query, skipping")
+            base_uri, token_uri, token_idx_format, is_ipfs = get_token_uri(CONTRACT, rand_token, contract_abi)
+        except Exception as e:
+            print("exception on token query, skipping", e, rand_token)
             time.sleep(5)
             continue
             
